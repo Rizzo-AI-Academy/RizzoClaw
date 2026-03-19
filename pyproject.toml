@@ -13,8 +13,13 @@ dependencies = [
     "python-telegram-bot>=22.6",
     "sqlalchemy>=2.0.48",
     "pypdf",
-    "reportlab"
+    "reportlab",
+    "ddgs",
+    "chromadb"
 ]
 
 [project.scripts]
 rizzoclaw = "rizzoclaw.bot:main"
+
+[tool.uv]
+package = true

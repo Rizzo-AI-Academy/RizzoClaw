@@ -1,5 +1,6 @@
 import httpx
 import os
+from datetime import datetime
 from typing import Optional
 
 from agno.agent import Agent
@@ -15,6 +16,7 @@ from agno.tools.shell import ShellTools
 from agno.skills import LocalSkills, Skills
 
 from rizzoclaw.config import TELEGRAM_BOT_TOKEN
+from rizzoclaw.sem_mem import add_memory, search_memory
 
 # Chat ID corrente — impostato prima di ogni chiamata all'agente
 _current_chat_id: Optional[int] = None
@@ -61,10 +63,23 @@ async def send_file_to_telegram(file_path: str, caption: str = "") -> str:
     return f"Errore nell'invio del file: {resp.text}"
 
 
+def cerca_memoria_semantica(query: str, n_results: int = 5) -> list[dict]:
+    """Cerca nella memoria semantica conversazioni passate simili alla query.
+
+    Args:
+        query (str): Testo della ricerca semantica.
+        n_results (int): Numero di risultati da restituire (default 5).
+
+    Returns:
+        Lista di dizionari con id, document, metadata e distance.
+    """
+    return search_memory(query=query, n_results=n_results)
+
+
 # 3. Agente con tools (skills), storage SQLite e memoria dinamica
 agent = Agent(
     model=OpenAIChat(id=model_name),
-    tools=[WebSearchTools(), FileTools(), PythonTools(), ShellTools(), send_file_to_telegram],
+    tools=[WebSearchTools(), FileTools(), PythonTools(), ShellTools(), send_file_to_telegram, cerca_memoria_semantica],
     db=db,
     skills=Skills(loaders=[LocalSkills(str("/Users/simonerizzo/Git-projects/RizzoClaw/.agents/skills"))]),
     memory_manager=memory_manager,
@@ -73,10 +88,10 @@ agent = Agent(
     num_history_runs=50,
     add_datetime_to_context=True,
     markdown=True,
-    user_id="simone2",
-    session_id="simone2",
+    user_id="simone_semantic2",
+    session_id="simone_semantic2",
     debug_mode=False,
-    instructions=""
+    instructions="Sei un Agente AI intelligente che vive nel mio pc. Il tuo nome è RizzoClaw. Hai accesso ai file system, puoi scrivere codice python, puoi lanciare comandi sulla shell, fare ricerche sul web, salvare le preferenze dell'utente in memoria ed anche cercare semanticamente nel database con tutte le conversazioni passate."
 )
 
 
@@ -91,4 +106,18 @@ async def run_agent(
     _current_chat_id = chat_id
 
     response = await agent.arun(user_message, user_id=user_id, files=files)
-    return response.content
+    agent_reply = response.content
+
+    today = datetime.now().strftime("%d-%m-%Y")
+    metadata = {
+        "date": today,
+        "question": user_message,
+        "answer": agent_reply,
+    }
+
+    # Indicizza la domanda con risposta nei metadati
+    add_memory(user_message, metadata)
+    # Indicizza la risposta con domanda nei metadati
+    add_memory(agent_reply, metadata)
+
+    return agent_reply
