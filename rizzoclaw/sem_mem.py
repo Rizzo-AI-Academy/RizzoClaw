@@ -58,11 +58,15 @@ def add_memory(text: str, metadata: dict, doc_id: str | None = None) -> str:
     Returns:
         l'ID del documento inserito
     """
+    from datetime import datetime
+    import uuid
+
     collection = _get_chroma_collection()
 
     if doc_id is None:
-        import uuid
         doc_id = str(uuid.uuid4())
+
+    metadata.setdefault("datetime", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     embedding = _embed(text)
 
@@ -113,6 +117,7 @@ def search_memory(query: str, n_results: int = 5, where: dict | None = None) -> 
             "id": doc_id,
             "document": doc,
             "metadata": meta,
+            "datetime": meta.get("datetime"),
             "distance": dist,
         })
 

@@ -2,6 +2,7 @@
 
 import logging
 import os
+import random
 import tempfile
 
 from agno.media import File as AgnoFile
@@ -51,7 +52,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_text = update.message.text
     chat_id = update.effective_chat.id
     response = await run_agent(user_text, chat_id=chat_id)
-    await update.message.reply_text(response)
+    await reply_text_or_audio(update, response)
+
+
+async def text_to_speech(text: str) -> bytes:
+    """Converte testo in audio mp3 tramite OpenAI TTS."""
+    response = await openai_client.audio.speech.create(
+        model="tts-1",
+        voice="nova",
+        input=text,
+    )
+    return response.content
+
+
+async def reply_text_or_audio(update: Update, text: str) -> None:
+    """Risponde con testo o audio con probabilità 50/50."""
+    if random.random() < 0.5:
+        await update.message.reply_text(text)
+        logger.info("Risposta inviata come testo")
+    else:
+        logger.info("Risposta inviata come audio (TTS)")
+        audio_bytes = await text_to_speech(text)
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+            tmp.write(audio_bytes)
+            tmp_path = tmp.name
+        with open(tmp_path, "rb") as f:
+            await update.message.reply_voice(f)
+        os.unlink(tmp_path)
 
 
 async def transcribe_audio(file_path: str) -> str:
@@ -85,7 +112,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     chat_id = update.effective_chat.id
     response = await run_agent(transcript, chat_id=chat_id)
-    await update.message.reply_text(response)
+    await reply_text_or_audio(update, response)
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -112,7 +139,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user_text += f"\n\nIl file è salvato in: {tmp_path}"
     chat_id = update.effective_chat.id
     response = await run_agent(user_text, files=[agno_file], chat_id=chat_id)
-    await update.message.reply_text(response)
+    await reply_text_or_audio(update, response)
 
 
 def create_app() -> Application:

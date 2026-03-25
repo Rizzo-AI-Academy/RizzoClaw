@@ -15,7 +15,8 @@ dependencies = [
     "pypdf",
     "reportlab",
     "ddgs",
-    "chromadb"
+    "chromadb",
+    "matplotlib"
 ]
 
 [project.scripts]
@@ -23,3 +24,6 @@ rizzoclaw = "rizzoclaw.bot:main"
 
 [tool.uv]
 package = true
+
+[tool.setuptools.packages.find]
+include = ["rizzoclaw*"]

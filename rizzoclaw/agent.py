@@ -1,5 +1,6 @@
 import httpx
 import os
+import uuid
 from datetime import datetime
 from typing import Optional
 
@@ -30,9 +31,46 @@ memory_manager = MemoryManager(
     model=OpenAIChat(id=model_name),
     db=db,
     memory_capture_instructions="""\
-        Raccogli il nome dell'utente,
-        Raccogli le preferenze e gli interessi dell'utente,
-        Raccogli informazioni su ciò che piace e non piace all'utente.
+        Cattura e aggiorna continuamente le seguenti informazioni sull'utente:
+
+        IDENTITÀ
+        - Nome, soprannome o come preferisce essere chiamato
+        - Professione, ruolo lavorativo e settore
+        - Lingua preferita e stile comunicativo (formale/informale)
+
+        PREFERENZE TECNICHE
+        - Linguaggi di programmazione e framework preferiti
+        - Strumenti, editor e ambienti di sviluppo usati
+        - Stack tecnologico dei progetti su cui lavora
+        - Approcci e pattern architetturali preferiti
+
+        PROGETTI E OBIETTIVI
+        - Progetti attuali e relativi obiettivi
+        - Problemi ricorrenti o sfide che affronta
+        - Risultati e traguardi raggiunti
+
+        VITA PERSONALE E FAMIGLIA
+        - Stato civile e nome del partner/coniuge
+        - Figli (nomi, età, caratteristiche rilevanti)
+        - Familiari stretti menzionati (genitori, fratelli, ecc.)
+        - Fede religiosa o spirituale e pratiche associate
+        - Valori etici e morali importanti per l'utente
+        - Luogo in cui vive (città, paese, contesto)
+        - Ricorrenze e date importanti (compleanni, anniversari)
+
+        INTERESSI E PERSONALITÀ
+        - Argomenti che appassionano l'utente (tech e non)
+        - Hobby e attività nel tempo libero
+        - Cose che non gli piacciono o che trova frustranti
+        - Valori e priorità personali
+
+        COMPORTAMENTO CON L'AGENTE
+        - Come preferisce ricevere le risposte (brevi/dettagliate, con esempi, con codice)
+        - Feedback espliciti dati all'agente (cosa ha apprezzato o criticato)
+        - Abitudini di lavoro (orari, ritmi, frequenza di utilizzo)
+
+        Aggiorna le informazioni esistenti se emergono dettagli nuovi o contraddittori.
+        Non duplicare informazioni già presenti in memoria.
     """
 )
 
@@ -81,18 +119,53 @@ agent = Agent(
     model=OpenAIChat(id=model_name),
     tools=[WebSearchTools(), FileTools(), PythonTools(), ShellTools(), send_file_to_telegram, cerca_memoria_semantica],
     db=db,
-    skills=Skills(loaders=[LocalSkills(str("/Users/simonerizzo/Git-projects/RizzoClaw/.agents/skills"))]),
+    skills=Skills(loaders=[LocalSkills(str(os.path.join(os.path.dirname(__file__), "..", ".agents", "skills")))]),
     memory_manager=memory_manager,
     enable_agentic_memory=True,         # memoria dinamica sulle preferenze
     add_history_to_context=True,
     num_history_runs=50,
     add_datetime_to_context=True,
     markdown=True,
-    user_id="simone_semantic2",
-    session_id="simone_semantic2",
-    debug_mode=False,
-    instructions="Sei un Agente AI intelligente che vive nel mio pc. Il tuo nome è RizzoClaw. Hai accesso ai file system, puoi scrivere codice python, puoi lanciare comandi sulla shell, fare ricerche sul web, salvare le preferenze dell'utente in memoria ed anche cercare semanticamente nel database con tutte le conversazioni passate."
+    user_id="simone_semantic3",
+    session_id="simone_semantic3",
+    debug_mode=True,
+    instructions="Sei un Agente AI intelligente che vive nel mio pc. Leggi la skilss agent-memory e parti dal file BRAIN.md e PROGRESS.md.  Il tuo nome è RizzoClaw. Hai accesso ai file system, puoi scrivere codice python, puoi lanciare comandi sulla shell, fare ricerche sul web, salvare le preferenze dell'utente in memoria ed anche cercare semanticamente nel database con tutte le conversazioni passate."
 )
+
+
+SESSION_TOKEN_LIMIT = 200_000
+
+
+async def _maybe_flush_session() -> bool:
+    """Se i token della sessione superano il limite, ordina all'agente di salvare
+    tutto in memoria tramite la skill agent-memory, poi resetta la sessione.
+
+    Returns:
+        True se il flush è stato eseguito, False altrimenti.
+    """
+    try:
+        session_metrics = agent.get_session_metrics()
+        total_tokens = session_metrics.total_tokens or 0
+    except Exception:
+        return False
+
+    if total_tokens < SESSION_TOKEN_LIMIT:
+        return False
+
+    flush_prompt = (
+        "Hai raggiunto il limite di token per questa sessione. "
+        "Segui le istruzioni della skill agent-memory: "
+        "1) aggiorna BRAIN.md con il riassunto di tutto ciò che è stato discusso finora, "
+        "le decisioni prese, il contesto utente e gli eventuali task in sospeso; "
+        "2) salva il dettaglio completo della sessione in memories/yyyy-mm-gg/session.md; "
+        "3) se sono presenti task di coding attivi, aggiorna PROGRESS.md. "
+        "Dopo aver salvato conferma con: 'Memoria salvata. La sessione verrà resettata.'"
+    )
+    await agent.arun(flush_prompt)
+
+    new_session_id = f"simone_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+    agent.session_id = new_session_id
+    return True
 
 
 async def run_agent(
@@ -105,8 +178,22 @@ async def run_agent(
     global _current_chat_id
     _current_chat_id = chat_id
 
+    flushed = await _maybe_flush_session()
+
     response = await agent.arun(user_message, user_id=user_id, files=files)
     agent_reply = response.content
+
+    try:
+        session_metrics = agent.get_session_metrics()
+        total_tokens = session_metrics.total_tokens or 0
+        print(f"[TOKEN USAGE] Sessione: {total_tokens:,} / {SESSION_TOKEN_LIMIT:,} token")
+        if flushed:
+            print(f"[MEMORY FLUSH] Triggered a {total_tokens:,} token — sessione resettata: {agent.session_id}")
+    except Exception:
+        pass
+
+    if flushed:
+        agent_reply = "_(Sessione resettata automaticamente: limite token raggiunto)_\n\n" + agent_reply
 
     today = datetime.now().strftime("%d-%m-%Y")
     metadata = {
